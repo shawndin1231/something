@@ -109,14 +109,15 @@ function MainContent() {
 
     const inputFileName = 'input' + getExtension(video.filename);
     const outputFormat = config.format;
-    const outputPattern = `/frame_%05d.${outputFormat}`;
+    const ffmpegFormat = outputFormat === 'jpeg' ? 'jpg' : outputFormat;
+    const outputPattern = `/frame_%05d.${ffmpegFormat}`;
 
     cleanupRef.current = async () => {
       try {
         await ffmpegService.deleteFile(inputFileName);
         const files = await ffmpegService.listFiles('/');
         for (const file of files) {
-          if (file.startsWith('frame_') && file.endsWith(`.${outputFormat}`)) {
+          if (file.startsWith('frame_') && file.endsWith(`.${ffmpegFormat}`)) {
             await ffmpegService.deleteFile('/' + file);
           }
         }
@@ -160,7 +161,7 @@ function MainContent() {
       if (cancelledRef.current) {
         const files = await ffmpegService.listFiles('/');
         for (const file of files) {
-          if (file.startsWith('frame_') && file.endsWith(`.${outputFormat}`)) {
+          if (file.startsWith('frame_') && file.endsWith(`.${ffmpegFormat}`)) {
             await ffmpegService.deleteFile('/' + file);
           }
         }
@@ -172,7 +173,7 @@ function MainContent() {
       const files = await ffmpegService.listFiles('/');
       console.log('FFmpeg files:', files);
       const frameFiles = files
-        .filter(f => f.startsWith('frame_') && f.endsWith(`.${outputFormat}`))
+        .filter(f => f.startsWith('frame_') && f.endsWith(`.${ffmpegFormat}`))
         .sort();
 
       console.log('Frame files found:', frameFiles);

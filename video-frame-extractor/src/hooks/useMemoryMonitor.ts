@@ -35,34 +35,63 @@ export function useMemoryMonitor(options: UseMemoryMonitorOptions = {}): UseMemo
   const previousStatusRef = useRef<string>('normal');
   const isSupported = typeof window !== 'undefined' && !!(window.performance as any).memory;
 
-  const checkMemory = useCallback(() => {
-    const info = getMemoryInfo();
-    const currentStatus = getMemoryStatus(thresholds);
+  const thresholdsRef = useRef(thresholds);
+  const onWarningRef = useRef(onWarning);
+  const onCriticalRef = useRef(onCritical);
+  const onEmergencyRef = useRef(onEmergency);
 
-    setMemoryInfo(info);
-    setStatus(currentStatus);
-
-    if (currentStatus !== previousStatusRef.current) {
-      previousStatusRef.current = currentStatus;
-
-      if (info) {
-        switch (currentStatus) {
-          case 'warning':
-            onWarning?.(info);
-            break;
-          case 'critical':
-            onCritical?.(info);
-            break;
-          case 'emergency':
-            onEmergency?.(info);
-            break;
-        }
-      }
-    }
-  }, [thresholds, onWarning, onCritical, onEmergency]);
+  useEffect(() => {
+    thresholdsRef.current = thresholds;
+    onWarningRef.current = onWarning;
+    onCriticalRef.current = onCritical;
+    onEmergencyRef.current = onEmergency;
+  });
 
   useEffect(() => {
     if (!isSupported) return;
+
+    const checkMemory = () => {
+      const info = getMemoryInfo();
+      const currentStatus = getMemoryStatus(thresholdsRef.current);
+
+      setMemoryInfo((prev) => {
+        if (
+          prev &&
+          info &&
+          prev.usedJSHeapSize === info.usedJSHeapSize &&
+          prev.totalJSHeapSize === info.totalJSHeapSize
+        ) {
+          return prev;
+        }
+        return info;
+      });
+
+      setStatus((prev) => {
+        if (prev === currentStatus) {
+          return prev;
+        }
+
+        if (currentStatus !== previousStatusRef.current) {
+          previousStatusRef.current = currentStatus;
+
+          if (info) {
+            switch (currentStatus) {
+              case 'warning':
+                onWarningRef.current?.(info);
+                break;
+              case 'critical':
+                onCriticalRef.current?.(info);
+                break;
+              case 'emergency':
+                onEmergencyRef.current?.(info);
+                break;
+            }
+          }
+        }
+
+        return currentStatus;
+      });
+    };
 
     checkMemory();
 
@@ -71,7 +100,7 @@ export function useMemoryMonitor(options: UseMemoryMonitorOptions = {}): UseMemo
     return () => {
       clearInterval(intervalId);
     };
-  }, [isSupported, intervalMs, checkMemory]);
+  }, [isSupported, intervalMs]);
 
   const forceGC = useCallback(() => {
     if (typeof (window as any).gc === 'function') {
