@@ -131,21 +131,33 @@ function MainContent() {
       await ffmpegService.writeFile(inputFileName, new Uint8Array(arrayBuffer));
 
       const fps = 1 / config.interval;
-      const qualityOption = outputFormat === 'png' ? '' : `-q:v ${Math.round((100 - config.quality) * 31 / 100)}`;
       
       const filterParts: string[] = [`fps=${fps}`];
       if (config.maxWidth > 0 || config.maxHeight > 0) {
-        filterParts.push(`scale=${config.maxWidth > 0 ? config.maxWidth : -1}:${config.maxHeight > 0 ? config.maxHeight : -1}`);
+        filterParts.push(`scale=${config.maxWidth > 0 ? config.maxWidth : -1}:${config.maxHeight > 0 ? config.maxHeight : -1}:flags=fast_bilinear`);
       }
       const vfFilter = filterParts.join(',');
 
-      const args = [
+      const args: string[] = [
         '-i', inputFileName,
+        '-threads', '0',
+        '-an',
+        '-dn',
         '-vf', vfFilter,
         '-vsync', 'vfr',
-        ...(qualityOption ? qualityOption.split(' ') : []),
-        '-y', outputPattern
       ];
+
+      if (outputFormat === 'png') {
+        args.push('-compression_level', '0');
+      } else if (outputFormat === 'jpeg') {
+        const quality = Math.round((100 - config.quality) * 31 / 100);
+        args.push('-q:v', quality.toString());
+      } else if (outputFormat === 'webp') {
+        args.push('-quality', config.quality.toString());
+        args.push('-compression_level', '0');
+      }
+
+      args.push('-y', outputPattern);
 
       await ffmpegService.exec(args, (progress) => {
         if (cancelledRef.current) return;
@@ -178,7 +190,10 @@ function MainContent() {
 
       console.log('Frame files found:', frameFiles);
 
-      for (let i = 0; i < frameFiles.length; i++) {
+      const BATCH_SIZE = 16;
+      const totalFrameFiles = frameFiles.length;
+
+      for (let batchStart = 0; batchStart < totalFrameFiles; batchStart += BATCH_SIZE) {
         if (cancelledRef.current) {
           frames.forEach(f => URL.revokeObjectURL(f.blobUrl));
           for (const file of frameFiles) {
@@ -188,28 +203,41 @@ function MainContent() {
           return;
         }
 
-        const file = frameFiles[i];
-        const data = await ffmpegService.readFile('/' + file);
-        const blob = new Blob([new Uint8Array(data)], { type: `image/${outputFormat}` });
-        const blobUrl = URL.createObjectURL(blob);
-        const timestamp = i * config.interval;
+        const batchEnd = Math.min(batchStart + BATCH_SIZE, totalFrameFiles);
+        const batchFiles = frameFiles.slice(batchStart, batchEnd);
 
-        frames.push({
-          id: `frame-${i}`,
-          filename: file,
-          timestamp,
-          blobUrl,
-          size: data.length,
-          width: config.maxWidth || video.width,
-          height: config.maxHeight || video.height,
-        });
+        const batchResults = await Promise.all(
+          batchFiles.map(async (file, batchIndex) => {
+            const globalIndex = batchStart + batchIndex;
+            const data = await ffmpegService.readFile('/' + file);
+            const blob = new Blob([new Uint8Array(data)], { type: `image/${outputFormat}` });
+            const blobUrl = URL.createObjectURL(blob);
+            const timestamp = globalIndex * config.interval;
 
-        await ffmpegService.deleteFile('/' + file);
+            return {
+              frame: {
+                id: `frame-${globalIndex}`,
+                filename: file,
+                timestamp,
+                blobUrl,
+                size: data.length,
+                width: config.maxWidth || video.width,
+                height: config.maxHeight || video.height,
+              } as Frame,
+              file,
+            };
+          })
+        );
+
+        for (const { frame, file } of batchResults) {
+          frames.push(frame);
+          await ffmpegService.deleteFile('/' + file);
+        }
 
         actions.updateProgress({
-          current: i + 1,
+          current: batchEnd,
           total: totalFrames,
-          percent: Math.round(((i + 1) / totalFrames) * 100),
+          percent: Math.round((batchEnd / totalFrames) * 100),
           estimatedTime: 0,
         });
       }

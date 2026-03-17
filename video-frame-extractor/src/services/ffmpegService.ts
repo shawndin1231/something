@@ -116,11 +116,13 @@ class FFmpegService {
       console.log('[FFmpeg]', message);
     });
 
-    ffmpeg.on('progress', ({ progress }) => {
+    const progressHandler = ({ progress }: { progress: number }) => {
       const percent = Math.round(progress * 100);
       this.loadProgress = Math.max(this.loadProgress, percent);
       onProgress?.(percent, 'Processing...');
-    });
+    };
+
+    ffmpeg.on('progress', progressHandler);
 
     try {
       onProgress?.(10, 'Downloading FFmpeg core...');
@@ -136,10 +138,13 @@ class FFmpegService {
         wasmURL: wasmBlobURL,
       });
 
+      ffmpeg.off('progress', progressHandler);
+
       onProgress?.(100, 'FFmpeg initialized');
 
       return ffmpeg;
     } catch (error) {
+      ffmpeg.off('progress', progressHandler);
       throw createFFmpegLoadError({
         message: `Failed to load from ${cdn.name}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         cdn: cdn.name,
